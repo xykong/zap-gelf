@@ -19,65 +19,25 @@ const (
 	MinChunkSize = 512
 
 	// MaxChunkSize maximal chunk size in bytes.
-	// See http://docs.graylog.org/en/2.4/pages/gelf.html.
+	// See https://docs.graylog.org/en/3.2/pages/gelf.html#chunking.
 	MaxChunkSize = 8192
 
 	// MaxChunkCount maximal chunk per message count.
-	// See http://docs.graylog.org/en/2.4/pages/gelf.html.
+	// See https://docs.graylog.org/en/3.2/pages/gelf.html#chunking.
 	MaxChunkCount = 128
 
 	// DefaultChunkSize is default WAN chunk size.
 	DefaultChunkSize = 1420
-
-	// CompressionNone don't use compression.
-	CompressionNone = 0
-
-	// CompressionGzip use gzip compression.
-	CompressionGzip = 1
-
-	// CompressionZlib use zlib compression.
-	CompressionZlib = 2
 )
 
 type (
-	// Option interface.
-	Option interface {
-		apply(conf *optionConf) error
-	}
-
-	// coreConf core.
-	optionConf struct {
-		address             string
-		host             string
-		version          string
-		enabler          zap.AtomicLevel
-		encoder          zapcore.EncoderConfig
-		chunkSize        int
-		writeSyncers     []zapcore.WriteSyncer
-		compressionType  int
-		compressionLevel int
-	}
-
-	// optionFunc wraps a func so it satisfies the Option interface.
-	optionFunc func(conf *optionConf) error
-
 	// implement io.Writer
-	writer struct {
+	udpWriter struct {
 		conn             net.Conn
 		chunkSize        int
 		chunkDataSize    int
 		compressionType  int
 		compressionLevel int
-	}
-
-	// implement io.WriteCloser.
-	writeCloser struct {
-		bytes.Buffer
-	}
-
-	// implement zapcore.Core.
-	wrappedCore struct {
-		core zapcore.Core
 	}
 )
 
@@ -92,15 +52,15 @@ var (
 	ErrUnknownCompressionType = errors.New("unknown compression type")
 
 	// chunkedMagicBytes chunked message magic bytes.
-	// See http://docs.graylog.org/en/2.4/pages/gelf.html.
+	// See https://docs.graylog.org/en/3.2/pages/gelf.html#chunking.
 	chunkedMagicBytes = []byte{0x1e, 0x0f}
 )
 
 // NewCore zap core constructor.
-func NewCore(options ...Option) (_ zapcore.Core, err error) {
+func NewUdpCore(options ...Option) (_ zapcore.Core, err error) {
 	var conf = optionConf{
 		address: "127.0.0.1:12201",
-		host: "localhost",
+		host:    "localhost",
 		encoder: zapcore.EncoderConfig{
 			TimeKey:        "timestamp",
 			NameKey:        "_logger",
@@ -129,7 +89,7 @@ func NewCore(options ...Option) (_ zapcore.Core, err error) {
 		}
 	}
 
-	var w = &writer{
+	var w = &udpWriter{
 		chunkSize:        conf.chunkSize,
 		chunkDataSize:    conf.chunkSize - 12, // chunk size - chunk header size
 		compressionType:  conf.compressionType,
@@ -283,7 +243,7 @@ func CompressionLevel(value int) Option {
 }
 
 // Write implements io.Writer.
-func (w *writer) Write(buf []byte) (n int, err error) {
+func (w *udpWriter) Write(buf []byte) (n int, err error) {
 	var (
 		cw   io.WriteCloser
 		cBuf bytes.Buffer
@@ -399,7 +359,7 @@ func escapeKey(value string) string {
 }
 
 // levelEncoder maps the zap log levels to the gelf levels.
-// See http://docs.graylog.org/en/2.4/pages/gelf.html.
+// See https://docs.graylog.org/en/3.2/pages/gelf.html.
 func levelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
 	switch l {
 	case zapcore.DebugLevel:
@@ -420,7 +380,7 @@ func levelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
 }
 
 // chunkCount calculate the number of GELF chunks.
-func (w *writer) chunkCount(b []byte) int {
+func (w *udpWriter) chunkCount(b []byte) int {
 	lenB := len(b)
 	if lenB <= w.chunkSize {
 		return 1
@@ -430,7 +390,7 @@ func (w *writer) chunkCount(b []byte) int {
 }
 
 // writeChunked send message by chunks.
-func (w *writer) writeChunked(count int, cBytes []byte) (n int, err error) {
+func (w *udpWriter) writeChunked(count int, cBytes []byte) (n int, err error) {
 	if count > MaxChunkCount {
 		return 0, fmt.Errorf("need %d chunks but shold be later or equal to %d", count, MaxChunkCount)
 	}
